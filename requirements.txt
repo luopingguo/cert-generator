@@ -1,0 +1,4 @@
+pandas>=1.0
+python-pptx>=0.6
+pypinyin>=0.44
+streamlit>=1.25
