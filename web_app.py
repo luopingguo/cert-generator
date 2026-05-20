@@ -3,10 +3,12 @@
 线上部署: 上传到 Streamlit Cloud / Zeabur 等平台
 """
 
-import os
 import io
-import zipfile
+import os
+import shutil
+import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -29,6 +31,12 @@ def init_surname_dict():
             pinyin_str = row["surname_pinyin"].strip()
             phrases[char] = [[s] for s in pinyin_str.split()]
         load_phrases_dict(phrases)
+
+
+@st.cache_resource
+def check_png_deps():
+    """检测 PNG 转换依赖是否可用"""
+    return shutil.which("soffice") is not None and shutil.which("pdftoppm") is not None
 
 
 def is_chinese(text):
@@ -60,8 +68,45 @@ def fill_template(prs, replacements):
     return prs
 
 
-def generate_pptxs(template_bytes, df):
-    """批量生成 PPTX，返回 {文件名: bytes}"""
+def pptx_to_png_first_page(pptx_bytes):
+    """将 PPTX 第一页转为 PNG 图片（返回 bytes）"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base = Path(tmpdir)
+        pptx_path = base / "input.pptx"
+        pptx_path.write_bytes(pptx_bytes)
+
+        # 1. PPTX → PDF
+        result = subprocess.run(
+            ["soffice", "--headless", "--convert-to", "pdf",
+             "--outdir", str(base), str(pptx_path)],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            return None
+
+        pdf_files = list(base.glob("*.pdf"))
+        if not pdf_files:
+            return None
+
+        # 2. PDF 第一页 → PNG
+        prefix = base / "page"
+        result = subprocess.run(
+            ["pdftoppm", "-png", "-r", "200", "-f", "1", "-l", "1",
+             str(pdf_files[0]), str(prefix)],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return None
+
+        generated = list(base.glob("page-*.png"))
+        if not generated:
+            return None
+
+        return generated[0].read_bytes()
+
+
+def generate_all(template_bytes, df, make_png):
+    """批量生成 PPTX + 可选 PNG，返回 {文件名: bytes}"""
     results = {}
     has_en_column = "en_name" in df.columns
 
@@ -86,10 +131,16 @@ def generate_pptxs(template_bytes, df):
             "{{EN_NAME}}": en_name
         })
 
-        fname = f"{num}_{uid}_{cn_name}.pptx"
-        buf = io.BytesIO()
-        prs.save(buf)
-        results[fname] = buf.getvalue()
+        base = f"{num}_{uid}_{cn_name}"
+        pptx_buf = io.BytesIO()
+        prs.save(pptx_buf)
+        pptx_bytes = pptx_buf.getvalue()
+        results[f"{base}.pptx"] = pptx_bytes
+
+        if make_png:
+            png_bytes = pptx_to_png_first_page(pptx_bytes)
+            if png_bytes:
+                results[f"{base}.png"] = png_bytes
 
     return results
 
@@ -127,6 +178,14 @@ with col1:
 with col2:
     pptx_file = st.file_uploader("📄 上传 PPTX 模板文件", type=["pptx"])
 
+# ---- PNG 选项 ----
+png_available = check_png_deps()
+make_png = st.checkbox("同时生成 PNG 图片（每份证书的第一页）",
+                        value=png_available,
+                        disabled=not png_available)
+if not png_available:
+    st.caption("⚠️ 云端未安装 LibreOffice，暂不支持 PNG（本地部署可启用）")
+
 # ---- 预览 ----
 if csv_file is not None:
     try:
@@ -146,42 +205,52 @@ if csv_file and pptx_file:
                 df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
                 pptx_bytes = pptx_file.read()
 
-                results = generate_pptxs(pptx_bytes, df)
+                results = generate_all(pptx_bytes, df, make_png)
+
+                pptx_count = sum(1 for k in results if k.endswith(".pptx"))
+                png_count = sum(1 for k in results if k.endswith(".png"))
 
                 if len(results) == 1:
-                    # 单个文件直接下载
                     name, data = list(results.items())[0]
-                    st.success(f"生成完成！")
+                    st.success("生成完成！")
                     st.download_button(
-                        "⬇ 下载 {name}", data=data, file_name=name,
+                        f"⬇ 下载 {name}", data=data, file_name=name,
                         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     )
                 else:
-                    # 多个文件打包成 zip
                     zip_buf = io.BytesIO()
                     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                         for name, data in results.items():
                             zf.writestr(name, data)
                     zip_buf.seek(0)
 
-                    st.success(f"生成完成！共 {len(results)} 个 PPTX 文件")
+                    summary = f"PPTX {pptx_count} 个"
+                    if png_count > 0:
+                        summary += f"，PNG {png_count} 个"
+                    st.success(f"生成完成！共 {summary}")
+
+                    zip_name = "certificates.zip"
                     st.download_button(
-                        label=f"⬇ 下载全部 PPTX（{len(results)} 个，ZIP 压缩包）",
+                        label=f"⬇ 下载全部（{summary}，ZIP 压缩包）",
                         data=zip_buf.getvalue(),
-                        file_name="certificates.zip",
+                        file_name=zip_name,
                         mime="application/zip",
                         use_container_width=True
                     )
 
-                    # 同时展示文件列表
                     with st.expander("📂 文件列表"):
                         for name in sorted(results.keys()):
-                            st.write(f"- {name}")
+                            icon = "🖼" if name.endswith(".png") else "📄"
+                            st.write(f"{icon} {name}")
+                            ext = name.split(".")[-1]
+                            mime_map = {
+                                "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                "png": "image/png"
+                            }
                             st.download_button(
                                 f"⬇ {name}", data=results[name],
-                                file_name=name,
-                                key=name,
-                                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                                file_name=name, key=name,
+                                mime=mime_map.get(ext, "application/octet-stream")
                             )
 
             except Exception as e:
