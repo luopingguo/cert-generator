@@ -135,12 +135,12 @@ def generate_all(template_bytes, df, make_png):
         pptx_buf = io.BytesIO()
         prs.save(pptx_buf)
         pptx_bytes = pptx_buf.getvalue()
-        results[f"{base}.pptx"] = pptx_bytes
+        results[f"pptx/{base}.pptx"] = pptx_bytes
 
         if make_png:
             png_bytes = pptx_to_png_first_page(pptx_bytes)
             if png_bytes:
-                results[f"{base}.png"] = png_bytes
+                results[f"png/{base}.png"] = png_bytes
 
     return results
 
