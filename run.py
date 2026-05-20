@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SACA 证书批量生成工具
+证书批量生成器
 =======================
 根据 CSV 数据 + PPTX 模板，批量生成带参数的 PPTX 文件，并可转换为 PNG。
 
@@ -42,8 +42,8 @@ from pptx import Presentation
 from pypinyin import lazy_pinyin, load_phrases_dict
 
 # ====================== 配置（按需修改） ======================
-TEMPLATE_PPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "SACA.pptx")
-CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saca.csv")
+TEMPLATE_PPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "template.pptx")
+CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample.csv")
 SURNAME_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "surname_pinyin.csv")
 OUTPUT_PPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output/pptx")
 OUTPUT_PNG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output/png")
@@ -146,7 +146,7 @@ def clean_cell(val):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="SACA 证书批量生成工具")
+    parser = argparse.ArgumentParser(description="证书批量生成器")
     parser.add_argument("--csv", default=CSV_FILE, help="CSV 数据文件路径")
     parser.add_argument("--template", default=TEMPLATE_PPT, help="PPTX 模板路径")
     parser.add_argument("--no-png", action="store_true", help="跳过 PNG 转换")

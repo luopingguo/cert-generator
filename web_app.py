@@ -1,4 +1,4 @@
-"""SACA 证书批量生成 — 网页版
+"""证书批量生成器 — 网页版
 本地运行: streamlit run web_app.py
 线上部署: 上传到 Streamlit Cloud / Zeabur 等平台
 """
@@ -96,8 +96,8 @@ def generate_pptxs(template_bytes, df):
 
 # ====================== 页面 ======================
 
-st.set_page_config(page_title="SACA 证书生成器", page_icon="📜", layout="centered")
-st.title("📜 SACA 证书批量生成")
+st.set_page_config(page_title="证书批量生成器", page_icon="📜", layout="centered")
+st.title("📜 证书批量生成器")
 st.caption("上传 CSV 数据文件和 PPTX 模板，一键批量生成证书")
 
 init_surname_dict()
@@ -168,7 +168,7 @@ if csv_file and pptx_file:
                     st.download_button(
                         label=f"⬇ 下载全部 PPTX（{len(results)} 个，ZIP 压缩包）",
                         data=zip_buf.getvalue(),
-                        file_name="SACA_Output.zip",
+                        file_name="certificates.zip",
                         mime="application/zip",
                         use_container_width=True
                     )

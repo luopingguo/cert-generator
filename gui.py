@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SACA 证书批量生成 — 桌面版
+证书批量生成器 — 桌面版
 双击运行或 python gui.py 启动可视化界面。
 """
 
@@ -106,7 +106,7 @@ def convert_to_png(pptx_path, output_png):
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("SACA 证书批量生成工具")
+        self.root.title("证书批量生成器")
         self.root.geometry("640x500")
         self.root.resizable(False, False)
 
@@ -115,7 +115,7 @@ class App:
         style.theme_use("clam")
 
         # ----- 标题 -----
-        title = ttk.Label(root, text="SACA 证书批量生成", font=("Helvetica", 18, "bold"))
+        title = ttk.Label(root, text="证书批量生成器", font=("Helvetica", 18, "bold"))
         title.pack(pady=(20, 5))
         ttk.Label(root, text="上传 CSV + PPTX 模板，一键批量生成证书", foreground="#666").pack()
 
@@ -142,7 +142,7 @@ class App:
         out_frame = ttk.Frame(root)
         out_frame.pack(fill="x", padx=40, pady=5)
         ttk.Label(out_frame, text="输出到", width=14).pack(side="left")
-        self.out_var = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Desktop", "SACA_Output"))
+        self.out_var = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Desktop", "Certificates"))
         ttk.Entry(out_frame, textvariable=self.out_var, width=40).pack(side="left", padx=(5, 5))
         ttk.Button(out_frame, text="选择...", command=self.select_output, width=8).pack(side="left")
 
