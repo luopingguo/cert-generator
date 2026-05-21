@@ -149,7 +149,7 @@ if not check_png_deps():
     st.stop()
 
 # ---- 使用说明 ----
-with st.expander("📖 使用说明", expanded=False):
+with st.expander("📖 使用说明", expanded=True):
     st.markdown("""
     **CSV 文件格式**（必须有表头）：
     | number | id | cn_name | en_name |
@@ -222,15 +222,17 @@ if csv_file and pptx_file:
                         use_container_width=True
                     )
 
-                    # 预览前几张
-                    with st.expander(f"🖼 图片预览（前 5 张）"):
-                        cols = st.columns(2)
-                        for i, (name, data) in enumerate(list(results.items())[:5]):
-                            with cols[i % 2]:
+                    # 默认展示第一张预览，其余可折叠查看
+                    first_name, first_data = list(results.items())[0]
+                    st.image(first_data, caption=first_name, use_container_width=True)
+
+                    if len(results) > 1:
+                        with st.expander(f"🖼 其余 {len(results) - 1} 张预览"):
+                            for name, data in list(results.items())[1:]:
                                 st.image(data, caption=name, use_container_width=True)
 
                     # 单张下载
-                    with st.expander("📂 文件列表"):
+                    with st.expander("📂 全部文件列表"):
                         for name in sorted(results.keys()):
                             st.download_button(
                                 f"⬇ {name}", data=results[name],
