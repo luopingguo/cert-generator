@@ -150,7 +150,9 @@ with left:
 
     if csv_file is not None:
         try:
-            preview_df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
+            csv_bytes = csv_file.getvalue()
+            st.session_state.csv_bytes = csv_bytes
+            preview_df = pd.read_csv(io.BytesIO(csv_bytes), dtype={"id": str, "number": str})
             st.caption(f"📋 数据预览（共 {len(preview_df)} 条，显示前 3 条）")
             st.dataframe(preview_df.head(3), use_container_width=True)
         except Exception as e:
@@ -158,14 +160,13 @@ with left:
 
     if csv_file and pptx_file:
         if st.button("🚀 开始批量生成 PNG", type="primary", use_container_width=True):
-            csv_file.seek(0)
-            st.session_state.csv_bytes = csv_file.read()
-            st.session_state.pptx_bytes = pptx_file.read()
+            st.session_state.csv_bytes = csv_file.getvalue()
+            st.session_state.pptx_bytes = pptx_file.getvalue()
             # 清理旧临时目录
             if st.session_state.work_dir:
                 shutil.rmtree(st.session_state.work_dir, ignore_errors=True)
-            # 准备批次数据
-            df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
+            # 从缓存 bytes 读取，避免文件指针问题
+            df = pd.read_csv(io.BytesIO(st.session_state.csv_bytes), dtype={"id": str, "number": str})
             st.session_state.total_rows = df.to_dict("records")
             st.session_state.batch_idx = 0
             st.session_state.png_names = []
