@@ -84,14 +84,10 @@ def pptx_bytes_to_png(pptx_bytes):
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode != 0:
-            st.session_state._last_lo_error = (
-                f"soffice rc={result.returncode} stderr={result.stderr[:500]}"
-            )
             return None
 
         pdf_files = list(base.glob("*.pdf"))
         if not pdf_files:
-            st.session_state._last_lo_error = "soffice 运行了但未生成 PDF"
             return None
 
         prefix = base / "page"
@@ -115,24 +111,6 @@ if not DEPS_OK:
     st.error("❌ 服务端未安装 LibreOffice / poppler，无法使用。")
     st.stop()
 
-# 诊断 soffice 是否能正常工作
-if "diag_done" not in st.session_state:
-    try:
-        diag = subprocess.run(
-            ["soffice", "--headless", "--version"],
-            capture_output=True, text=True, timeout=30,
-        )
-        st.session_state.soffice_version = diag.stdout.strip() or diag.stderr.strip() or "unknown"
-        st.session_state.soffice_path = shutil.which("soffice") or "not found"
-    except Exception as e:
-        st.session_state.soffice_version = f"error: {e}"
-        st.session_state.soffice_path = "error"
-    st.session_state.diag_done = True
-
-with st.expander("🔧 环境诊断", expanded=False):
-    st.write(f"soffice 路径: `{st.session_state.soffice_path}`")
-    st.write(f"soffice 版本: `{st.session_state.soffice_version}`")
-
 # ===== 标题 =====
 st.title("📜 证书批量生成器")
 st.caption("上传 CSV + PPTX 模板，批量导出证书 PNG 图片")
@@ -140,7 +118,7 @@ st.divider()
 
 left, right = st.columns([1, 1])
 
-# ===== 左栏 =====
+# ===== 左栏：配置 =====
 with left:
     with st.expander("📖 使用说明", expanded=True):
         st.markdown("""
@@ -179,7 +157,7 @@ with left:
         if st.button("🚀 开始批量生成 PNG", type="primary", use_container_width=True):
             st.session_state._go = True
 
-# ===== 右栏 =====
+# ===== 右栏：进度 + 下载 + 预览 =====
 with right:
     if st.session_state.get("_go"):
         st.session_state._go = False
@@ -191,12 +169,17 @@ with right:
             has_en_column = "en_name" in df.columns
             total = len(df)
 
-            # 临时目录存 PNG
             work_dir = Path(tempfile.mkdtemp(prefix="cert_"))
 
             progress_bar = st.progress(0, text="准备中...")
             status_text = st.empty()
-            preview_spot = st.empty()
+
+            # 取消按钮（刷新页面即中断当前执行）
+            cancel_spot = st.empty()
+            cancel_spot.markdown(
+                '<a href="?" style="color:#999;text-decoration:none;">⏹ 取消生成</a>',
+                unsafe_allow_html=True
+            )
 
             png_names = []
             first_name = None
@@ -236,8 +219,6 @@ with right:
                     if first_name is None:
                         first_name = fname
                         first_data = png_bytes
-                        preview_spot.image(first_data, caption=first_name,
-                                           use_container_width=True)
                 else:
                     fail += 1
 
@@ -247,11 +228,9 @@ with right:
 
             progress_bar.empty()
             status_text.empty()
+            cancel_spot.empty()
 
             if ok > 0:
-                st.session_state._last_lo_error = None
-
-                # 生成 ZIP
                 zip_buf = io.BytesIO()
                 with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                     for name in png_names:
@@ -275,7 +254,7 @@ with right:
                     st.image(first_data, caption=first_name,
                              use_container_width=True)
             else:
-                st.error(f"❌ 全部 {total} 张转换失败，请检查模板格式是否正确")
+                st.error(f"❌ 全部 {total} 张转换失败")
 
         except Exception as e:
             st.error(f"生成失败: {e}")
