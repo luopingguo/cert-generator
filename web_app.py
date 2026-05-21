@@ -176,7 +176,6 @@ with right:
 
             png_names = []
             first_name = None
-            first_data = None
             ok = 0
             fail = 0
 
@@ -211,7 +210,6 @@ with right:
                     ok += 1
                     if first_name is None:
                         first_name = fname
-                        first_data = png_bytes
                 else:
                     fail += 1
 
@@ -222,13 +220,12 @@ with right:
             progress_bar.empty()
             status_text.empty()
 
-            # 持久化结果，下载点击后页面刷新不丢失
+            # 持久化结果（不存大字节，存文件名即可，展示时从磁盘读）
             st.session_state._ok = ok
             st.session_state._fail = fail
             st.session_state._png_names = png_names
             st.session_state._work_dir = str(work_dir)
             st.session_state._first_name = first_name
-            st.session_state._first_data = first_data
 
             # 当前渲染直接展示结果
             if ok > 0:
@@ -255,8 +252,8 @@ with right:
                     msg += f"，失败 {fail} 张"
                 st.success(msg)
 
-                if first_data:
-                    st.image(first_data, caption=first_name,
+                if first_name:
+                    st.image(str(work_dir / first_name), caption=first_name,
                              use_container_width=True)
             else:
                 st.error(f"❌ 全部 {total} 张转换失败")
@@ -271,7 +268,6 @@ with right:
         png_names = st.session_state.get("_png_names", [])
         work_dir = Path(st.session_state["_work_dir"])
         first_name = st.session_state.get("_first_name")
-        first_data = st.session_state.get("_first_data")
 
         if ok > 0:
             loading = st.empty()
@@ -297,8 +293,8 @@ with right:
                 msg += f"，失败 {fail} 张"
             st.success(msg)
 
-            if first_data and first_name:
-                st.image(first_data, caption=first_name,
+            if first_name:
+                st.image(str(work_dir / first_name), caption=first_name,
                          use_container_width=True)
         else:
             st.error(f"❌ 全部 {fail} 张转换失败")
