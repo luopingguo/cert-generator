@@ -20,7 +20,6 @@ from pypinyin import lazy_pinyin, load_phrases_dict
 
 @st.cache_resource
 def init_surname_dict():
-    """加载姓氏多音字字典"""
     csv_path = Path(__file__).parent / "surname_pinyin.csv"
     if csv_path.exists():
         df = pd.read_csv(csv_path, dtype=str)
@@ -67,7 +66,6 @@ def fill_template(prs, replacements):
 
 
 def pptx_bytes_to_png(pptx_bytes):
-    """将 PPTX 第一页转为 PNG（返回 bytes，失败返回 None）"""
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir)
         pptx_path = base / "input.pptx"
@@ -99,12 +97,10 @@ def pptx_bytes_to_png(pptx_bytes):
 
 
 def generate_pngs(template_bytes, df):
-    """批量生成 PNG 图片，返回 {文件名: bytes}"""
     results = {}
     has_en_column = "en_name" in df.columns
-    total = len(df)
 
-    for idx, (_, row) in enumerate(df.iterrows()):
+    for _, row in df.iterrows():
         uid = clean_cell(row["id"])
         cn_name = str(row["cn_name"]).strip()
         num = clean_cell(row["number"])
@@ -118,7 +114,6 @@ def generate_pngs(template_bytes, df):
             if en_name == "":
                 en_name = chinese_to_pinyin(cn_name)
 
-        # 生成 PPTX → 转 PNG → PPTX 丢弃
         prs = Presentation(io.BytesIO(template_bytes))
         fill_template(prs, {
             "{{ID}}": uid,
@@ -137,113 +132,99 @@ def generate_pngs(template_bytes, df):
 
 # ====================== 页面 ======================
 
-st.set_page_config(page_title="证书批量生成器", page_icon="📜", layout="centered")
-st.title("📜 证书批量生成器")
-st.caption("上传 CSV 数据文件 + PPTX 模板，批量导出证书 PNG 图片")
-
+st.set_page_config(page_title="证书批量生成器", page_icon="📜", layout="wide")
 init_surname_dict()
+
+if "results" not in st.session_state:
+    st.session_state.results = None
 
 # ---- 依赖检测 ----
 if not check_png_deps():
     st.error("❌ 服务端未安装 LibreOffice，暂时无法使用。请联系管理员。")
     st.stop()
 
-# ---- 使用说明 ----
-with st.expander("📖 使用说明", expanded=True):
-    st.markdown("""
-    **CSV 文件格式**（必须有表头）：
-    | number | id | cn_name | en_name |
-    |--------|----|---------|---------|
-    | 001 | 2026001 | 张三 | |
-    | 002 | 2026002 | Lisa | |
-    | 003 | 2026003 | 卜苗 | |
+# ---- 左右双栏布局 ----
+left, right = st.columns([1, 1])
 
-    **PPTX 模板占位符**：`{{ID}}` `{{CN_NAME}}` `{{EN_NAME}}`
+with left:
+    st.title("📜 证书批量生成器")
+    st.caption("上传 CSV + PPTX 模板，批量导出证书 PNG 图片")
 
-    **EN_NAME 规则**：
-    - cn_name 是英文 → 留空
-    - en_name 列有值 → 直接用
-    - 否则 → 拼音自动生成（含多音字纠正）
-    """)
+    with st.expander("📖 使用说明", expanded=True):
+        st.markdown("""
+        **CSV 文件格式**（必须有表头）：
+        | number | id | cn_name | en_name |
+        |--------|----|---------|---------|
+        | 001 | 2026001 | 张三 | |
+        | 002 | 2026002 | Lisa | |
+        | 003 | 2026003 | 卜苗 | |
 
-# ---- 文件上传 ----
-col1, col2 = st.columns(2)
-with col1:
+        **PPTX 模板占位符**：`{{ID}}` `{{CN_NAME}}` `{{EN_NAME}}`
+
+        **EN_NAME 规则**：
+        - cn_name 是英文 → 留空
+        - en_name 列有值 → 直接用
+        - 否则 → 拼音自动生成（含多音字纠正）
+        """)
+
     csv_file = st.file_uploader("📄 上传 CSV 数据文件", type=["csv"])
-with col2:
     pptx_file = st.file_uploader("📄 上传 PPTX 模板文件", type=["pptx"])
 
-# ---- 预览 ----
-if csv_file is not None:
-    try:
-        preview_df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
-        st.subheader("📋 数据预览")
-        st.dataframe(preview_df, use_container_width=True)
-        st.caption(f"共 {len(preview_df)} 条记录")
-    except Exception as e:
-        st.error(f"CSV 解析失败: {e}")
+    if csv_file is not None:
+        try:
+            preview_df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
+            st.caption(f"📋 数据预览（共 {len(preview_df)} 条）")
+            st.dataframe(preview_df, use_container_width=True)
+        except Exception as e:
+            st.error(f"CSV 解析失败: {e}")
 
-# ---- 生成按钮 ----
-if csv_file and pptx_file:
-    if st.button("🚀 开始批量生成 PNG", type="primary", use_container_width=True):
-        with st.spinner("正在生成证书图片..."):
-            try:
-                csv_file.seek(0)
-                df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
-                pptx_bytes = pptx_file.read()
+    if csv_file and pptx_file:
+        if st.button("🚀 开始批量生成 PNG", type="primary", use_container_width=True):
+            with st.spinner("正在生成证书图片..."):
+                try:
+                    csv_file.seek(0)
+                    df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
+                    pptx_bytes = pptx_file.read()
+                    st.session_state.results = generate_pngs(pptx_bytes, df)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"生成失败: {e}")
+    else:
+        st.session_state.results = None
 
-                results = generate_pngs(pptx_bytes, df)
+# ---- 右栏：预览 + 下载 ----
+with right:
+    results = st.session_state.results
 
-                if not results:
-                    st.error("生成失败，请检查模板和 CSV 数据是否正确。")
-                elif len(results) == 1:
-                    name, data = list(results.items())[0]
-                    st.success("生成完成！")
-                    left, right = st.columns([1, 1])
-                    with left:
-                        st.download_button(
-                            f"⬇ 下载 {name}", data=data, file_name=name,
-                            mime="image/png"
-                        )
-                    with right:
-                        st.image(data, caption=name, use_container_width=True)
-                else:
-                    st.success(f"生成完成！共 {len(results)} 张 PNG 图片")
+    if results is None:
+        st.markdown("""
+        <div style="height:100%;display:flex;align-items:center;justify-content:center;color:#999;font-size:18px">
+        👈 上传 CSV 和 PPTX 模板，点击生成按钮<br>证书预览将显示在这里
+        </div>
+        """, unsafe_allow_html=True)
+    elif not results:
+        st.error("生成失败，请检查模板和 CSV 数据是否正确。")
+    else:
+        # ZIP 下载
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, data in results.items():
+                zf.writestr(name, data)
+        zip_buf.seek(0)
 
-                    # 打包 ZIP
-                    zip_buf = io.BytesIO()
-                    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                        for name, data in results.items():
-                            zf.writestr(name, data)
-                    zip_buf.seek(0)
+        st.download_button(
+            label=f"⬇ 下载全部（{len(results)} 张，ZIP）",
+            data=zip_buf.getvalue(),
+            file_name="certificates.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
 
-                    left, right = st.columns([1, 1])
-                    with left:
-                        st.download_button(
-                            label=f"⬇ 下载全部 PNG（{len(results)} 张，ZIP）",
-                            data=zip_buf.getvalue(),
-                            file_name="certificates.zip",
-                            mime="application/zip",
-                            use_container_width=True
-                        )
-                        with st.expander("📂 全部文件列表"):
-                            for name in sorted(results.keys()):
-                                st.download_button(
-                                    f"⬇ {name}", data=results[name],
-                                    file_name=name, key=name,
-                                    mime="image/png"
-                                )
-                        if len(results) > 1:
-                            with st.expander(f"🖼 其余 {len(results) - 1} 张预览"):
-                                for name, data in list(results.items())[1:]:
-                                    st.image(data, caption=name, use_container_width=True)
+        st.success(f"共生成 {len(results)} 张证书图片")
 
-                    with right:
-                        first_name, first_data = list(results.items())[0]
-                        st.image(first_data, caption=first_name, use_container_width=True)
-
-            except Exception as e:
-                st.error(f"生成失败: {e}")
+        # 第一张预览
+        first_name, first_data = list(results.items())[0]
+        st.image(first_data, caption=first_name, use_container_width=True)
 
 # ---- 页脚 ----
 st.divider()
