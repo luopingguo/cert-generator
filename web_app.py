@@ -86,10 +86,15 @@ def pptx_bytes_to_png(pptx_bytes):
         pptx_path = base / "input.pptx"
         pptx_path.write_bytes(pptx_bytes)
 
+        env = os.environ.copy()
+        env.setdefault("HOME", "/tmp")
+        env.setdefault("SAL_USE_VCLPLUGIN", "gen")
+
         result = subprocess.run(
-            ["soffice", "--headless", "--convert-to", "pdf",
+            ["soffice", "--headless", "--norestore", "--convert-to", "pdf",
              "--outdir", str(base), str(pptx_path)],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, timeout=120,
+            env=env,
         )
         if result.returncode != 0:
             return None
@@ -115,7 +120,7 @@ def pptx_bytes_to_png(pptx_bytes):
 
 st.set_page_config(page_title="证书批量生成器", page_icon="📜", layout="wide")
 
-BATCH_SIZE = 20  # 每批处理数量
+BATCH_SIZE = 5  # 每批处理数量，避免容器内存超限
 
 # 初始化 session state
 for key, default in [("trigger", False), ("pptx_bytes", None),
@@ -253,6 +258,9 @@ with right:
                 progress_bar.progress(global_i / total,
                                       text=f"正在处理 {global_i}/{total}")
                 status_text.caption(f"当前：{cn_name}")
+
+            # 清理僵尸 soffice 进程
+            subprocess.run(["pkill", "-f", "soffice"], capture_output=True)
 
             if is_last_batch:
                 progress_bar.empty()
