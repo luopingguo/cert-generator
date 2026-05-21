@@ -101,9 +101,12 @@ def pptx_bytes_to_png(pptx_bytes):
 st.set_page_config(page_title="证书批量生成器", page_icon="📜", layout="wide")
 init_surname_dict()
 
+BATCH_SIZE = 30  # 每批处理数量，避免 Streamlit Cloud 超时
+
 # 初始化 session state
 for key, default in [("trigger", False), ("csv_bytes", None), ("pptx_bytes", None),
-                     ("work_dir", None), ("png_count", 0), ("png_names", [])]:
+                     ("work_dir", None), ("batch_idx", 0), ("total_rows", []),
+                     ("png_names", []), ("first_png_name", None), ("generating", False)]:
     if key not in st.session_state:
         st.session_state[key] = default
 
@@ -161,41 +164,50 @@ with left:
             # 清理旧临时目录
             if st.session_state.work_dir:
                 shutil.rmtree(st.session_state.work_dir, ignore_errors=True)
-            st.session_state.trigger = True
-            st.session_state.work_dir = None
-            st.session_state.png_count = 0
+            # 准备批次数据
+            df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
+            st.session_state.total_rows = df.to_dict("records")
+            st.session_state.batch_idx = 0
             st.session_state.png_names = []
+            st.session_state.first_png_name = None
+            st.session_state.work_dir = str(Path(tempfile.mkdtemp(prefix="cert_")))
+            st.session_state.trigger = True
             st.rerun()
 
 # ===== 右栏：进度 + 下载 + 预览 =====
 with right:
     if st.session_state.trigger:
         try:
-            csv_bytes = st.session_state.csv_bytes
+            total_rows = st.session_state.total_rows
+            total = len(total_rows)
+            batch_idx = st.session_state.batch_idx
             pptx_bytes = st.session_state.pptx_bytes
-            df = pd.read_csv(io.BytesIO(csv_bytes), dtype={"id": str, "number": str})
-            has_en_column = "en_name" in df.columns
-            total = len(df)
+            work_dir = Path(st.session_state.work_dir)
+            has_en_column = any("en_name" in str(k) for k in total_rows[0].keys()) if total_rows else False
 
-            # 创建临时工作目录，存 PNG 文件
-            work_dir = Path(tempfile.mkdtemp(prefix="cert_"))
-            st.session_state.work_dir = str(work_dir)
+            # 本批处理范围
+            batch_end = min(batch_idx + BATCH_SIZE, total)
+            is_last_batch = (batch_end >= total)
+            batch_rows = total_rows[batch_idx:batch_end]
+            batch_count = len(batch_rows)
 
-            progress_bar = st.progress(0, text="准备中...")
+            progress_bar = st.progress(0, text=f"正在生成第 {batch_idx + 1}-{batch_end} 张...")
             status_text = st.empty()
             preview_spot = st.empty()
 
-            png_names = []
-            first_png_name = None
-            for i, (_, row) in enumerate(df.iterrows()):
-                uid = clean_cell(row["id"])
-                cn_name = str(row["cn_name"]).strip()
-                num = clean_cell(row["number"])
+            # 如果是第一批，显示准备阶段；否则显示继续阶段
+            if batch_idx == 0:
+                st.caption(f"预计用时约 {total * 3 // 60} 分钟，每批 {BATCH_SIZE} 张分批处理")
+
+            for j, row in enumerate(batch_rows):
+                uid = clean_cell(row.get("id", ""))
+                cn_name = str(row.get("cn_name", "")).strip()
+                num = clean_cell(row.get("number", ""))
 
                 en_name = ""
                 if is_chinese(cn_name):
                     if has_en_column:
-                        val = row["en_name"]
+                        val = row.get("en_name", "")
                         if pd.notna(val) and str(val).strip() != "":
                             en_name = str(val).strip()
                     if en_name == "":
@@ -215,33 +227,37 @@ with right:
                     fname = f"{num}_{uid}_{cn_name}.png"
                     filepath = work_dir / fname
                     filepath.write_bytes(png_bytes)
-                    png_names.append(fname)
+                    st.session_state.png_names.append(fname)
 
-                    if i == 0:
-                        first_png_name = fname
+                    # 第一张作为预览
+                    if batch_idx == 0 and j == 0:
+                        st.session_state.first_png_name = fname
                         preview_spot.image(png_bytes, caption=fname, use_container_width=True)
 
-                pct = (i + 1) / total
-                progress_bar.progress(pct, text=f"正在处理 {i + 1}/{total}")
-                status_text.caption(f"当前：{cn_name}")
+                global_i = batch_idx + j + 1
+                progress_bar.progress(global_i / total, text=f"正在处理 {global_i}/{total}")
+                status_text.caption(f"当前：{cn_name}  |  第 {batch_idx + 1}-{batch_end} 批")
 
-            progress_bar.empty()
-            status_text.empty()
+            if is_last_batch:
+                progress_bar.empty()
+                status_text.empty()
+                st.session_state.trigger = False
+            else:
+                # 继续下一批
+                st.session_state.batch_idx = batch_end
+                # 短暂延迟让 UI 刷新
+                progress_bar.progress(batch_end / total, text=f"已完成 {batch_end}/{total}，准备下一批...")
 
-            st.session_state.png_count = len(png_names)
-            st.session_state.png_names = png_names
-            st.session_state.first_png_name = first_png_name
-            st.session_state.trigger = False
             st.rerun()
 
         except Exception as e:
             st.session_state.trigger = False
             st.error(f"生成失败: {e}")
 
-    elif st.session_state.work_dir and st.session_state.png_count > 0:
+    elif st.session_state.work_dir and st.session_state.png_names:
         work_dir = Path(st.session_state.work_dir)
         png_names = st.session_state.png_names
-        count = st.session_state.png_count
+        count = len(png_names)
 
         # 从磁盘文件生成 ZIP
         zip_buf = io.BytesIO()
