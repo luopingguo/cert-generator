@@ -173,6 +173,7 @@ with right:
 
             progress_bar = st.progress(0, text="准备中...")
             status_text = st.empty()
+            preview_spot = st.empty()
 
             png_names = []
             first_name = None
@@ -210,6 +211,9 @@ with right:
                     ok += 1
                     if first_name is None:
                         first_name = fname
+                        preview_spot.image(str(work_dir / fname),
+                                           caption=first_name,
+                                           use_container_width=True)
                 else:
                     fail += 1
 
@@ -219,6 +223,7 @@ with right:
 
             progress_bar.empty()
             status_text.empty()
+            preview_spot.empty()
 
             # 持久化结果（不存大字节，存文件名即可，展示时从磁盘读）
             st.session_state._ok = ok
