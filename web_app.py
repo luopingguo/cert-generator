@@ -174,10 +174,10 @@ with right:
             progress_bar = st.progress(0, text="准备中...")
             status_text = st.empty()
 
-            # 取消按钮（刷新页面即中断当前执行）
+            # 取消按钮（刷新当前页面以中断执行）
             cancel_spot = st.empty()
             cancel_spot.markdown(
-                '<a href="?" style="color:#999;text-decoration:none;">⏹ 取消生成</a>',
+                '<a href="javascript:location.reload()" style="color:#999;text-decoration:none;">⏹ 取消生成</a>',
                 unsafe_allow_html=True
             )
 
@@ -230,6 +230,15 @@ with right:
             status_text.empty()
             cancel_spot.empty()
 
+            # 持久化结果，下载点击后页面刷新不丢失
+            st.session_state._ok = ok
+            st.session_state._fail = fail
+            st.session_state._png_names = png_names
+            st.session_state._work_dir = str(work_dir)
+            st.session_state._first_name = first_name
+            st.session_state._first_data = first_data
+
+            # 当前渲染直接展示结果
             if ok > 0:
                 zip_buf = io.BytesIO()
                 with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -258,6 +267,41 @@ with right:
 
         except Exception as e:
             st.error(f"生成失败: {e}")
+
+    elif st.session_state.get("_work_dir"):
+        # 历史结果展示（下载点击后页面刷新时不会丢失）
+        ok = st.session_state.get("_ok", 0)
+        fail = st.session_state.get("_fail", 0)
+        png_names = st.session_state.get("_png_names", [])
+        work_dir = Path(st.session_state["_work_dir"])
+        first_name = st.session_state.get("_first_name")
+        first_data = st.session_state.get("_first_data")
+
+        if ok > 0:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for name in png_names:
+                    zf.write(work_dir / name, arcname=name)
+            zip_buf.seek(0)
+
+            st.download_button(
+                label=f"⬇ 下载全部（{ok} 张，ZIP）",
+                data=zip_buf.getvalue(),
+                file_name="certificates.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
+
+            msg = f"✅ 成功 {ok} 张"
+            if fail > 0:
+                msg += f"，失败 {fail} 张"
+            st.success(msg)
+
+            if first_data and first_name:
+                st.image(first_data, caption=first_name,
+                         use_container_width=True)
+        else:
+            st.error(f"❌ 全部 {fail} 张转换失败")
 
     else:
         st.markdown("""
