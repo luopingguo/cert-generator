@@ -199,11 +199,14 @@ if csv_file and pptx_file:
                 elif len(results) == 1:
                     name, data = list(results.items())[0]
                     st.success("生成完成！")
-                    st.image(data, caption=name, use_container_width=True)
-                    st.download_button(
-                        f"⬇ 下载 {name}", data=data, file_name=name,
-                        mime="image/png"
-                    )
+                    left, right = st.columns([1, 1])
+                    with left:
+                        st.download_button(
+                            f"⬇ 下载 {name}", data=data, file_name=name,
+                            mime="image/png"
+                        )
+                    with right:
+                        st.image(data, caption=name, use_container_width=True)
                 else:
                     st.success(f"生成完成！共 {len(results)} 张 PNG 图片")
 
