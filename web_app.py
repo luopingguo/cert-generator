@@ -174,13 +174,6 @@ with right:
             progress_bar = st.progress(0, text="准备中...")
             status_text = st.empty()
 
-            # 取消按钮（刷新当前页面以中断执行）
-            cancel_spot = st.empty()
-            cancel_spot.markdown(
-                '<a href="javascript:location.reload()" style="color:#999;text-decoration:none;">⏹ 取消生成</a>',
-                unsafe_allow_html=True
-            )
-
             png_names = []
             first_name = None
             first_data = None
@@ -228,7 +221,6 @@ with right:
 
             progress_bar.empty()
             status_text.empty()
-            cancel_spot.empty()
 
             # 持久化结果，下载点击后页面刷新不丢失
             st.session_state._ok = ok
@@ -240,11 +232,14 @@ with right:
 
             # 当前渲染直接展示结果
             if ok > 0:
+                loading = st.empty()
+                loading.info("⏳ 正在打包 ZIP 文件，请稍候...")
                 zip_buf = io.BytesIO()
                 with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                     for name in png_names:
                         zf.write(work_dir / name, arcname=name)
                 zip_buf.seek(0)
+                loading.empty()
 
                 st.download_button(
                     label=f"⬇ 下载全部（{ok} 张，ZIP）",
@@ -253,6 +248,7 @@ with right:
                     mime="application/zip",
                     use_container_width=True
                 )
+                st.caption("如果下载未弹出，请允许浏览器下载多个文件")
 
                 msg = f"✅ 成功 {ok} 张"
                 if fail > 0:
@@ -278,11 +274,14 @@ with right:
         first_data = st.session_state.get("_first_data")
 
         if ok > 0:
+            loading = st.empty()
+            loading.info("⏳ 正在打包 ZIP 文件，请稍候...")
             zip_buf = io.BytesIO()
             with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 for name in png_names:
                     zf.write(work_dir / name, arcname=name)
             zip_buf.seek(0)
+            loading.empty()
 
             st.download_button(
                 label=f"⬇ 下载全部（{ok} 张，ZIP）",
@@ -291,6 +290,7 @@ with right:
                 mime="application/zip",
                 use_container_width=True
             )
+            st.caption("如果下载未弹出，请允许浏览器下载多个文件")
 
             msg = f"✅ 成功 {ok} 张"
             if fail > 0:
