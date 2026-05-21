@@ -78,20 +78,20 @@ def pptx_bytes_to_png(pptx_bytes):
         pptx_path = base / "input.pptx"
         pptx_path.write_bytes(pptx_bytes)
 
-        env = os.environ.copy()
-        env.setdefault("HOME", "/tmp")
-        env.setdefault("SAL_USE_VCLPLUGIN", "gen")
-
         result = subprocess.run(
-            ["soffice", "--headless", "--norestore", "--convert-to", "pdf",
+            ["soffice", "--headless", "--convert-to", "pdf",
              "--outdir", str(base), str(pptx_path)],
-            capture_output=True, text=True, timeout=120, env=env,
+            capture_output=True, text=True, timeout=120,
         )
         if result.returncode != 0:
+            st.session_state._last_lo_error = (
+                f"soffice rc={result.returncode} stderr={result.stderr[:500]}"
+            )
             return None
 
         pdf_files = list(base.glob("*.pdf"))
         if not pdf_files:
+            st.session_state._last_lo_error = "soffice 运行了但未生成 PDF"
             return None
 
         prefix = base / "page"
@@ -114,6 +114,24 @@ st.set_page_config(page_title="证书批量生成器", page_icon="📜", layout=
 if not DEPS_OK:
     st.error("❌ 服务端未安装 LibreOffice / poppler，无法使用。")
     st.stop()
+
+# 诊断 soffice 是否能正常工作
+if "diag_done" not in st.session_state:
+    try:
+        diag = subprocess.run(
+            ["soffice", "--headless", "--version"],
+            capture_output=True, text=True, timeout=30,
+        )
+        st.session_state.soffice_version = diag.stdout.strip() or diag.stderr.strip() or "unknown"
+        st.session_state.soffice_path = shutil.which("soffice") or "not found"
+    except Exception as e:
+        st.session_state.soffice_version = f"error: {e}"
+        st.session_state.soffice_path = "error"
+    st.session_state.diag_done = True
+
+with st.expander("🔧 环境诊断", expanded=False):
+    st.write(f"soffice 路径: `{st.session_state.soffice_path}`")
+    st.write(f"soffice 版本: `{st.session_state.soffice_version}`")
 
 # ===== 标题 =====
 st.title("📜 证书批量生成器")
@@ -231,6 +249,8 @@ with right:
             status_text.empty()
 
             if ok > 0:
+                st.session_state._last_lo_error = None
+
                 # 生成 ZIP
                 zip_buf = io.BytesIO()
                 with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
