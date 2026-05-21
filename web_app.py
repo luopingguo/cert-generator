@@ -4,7 +4,6 @@
 """
 
 import io
-import os
 import shutil
 import subprocess
 import tempfile
@@ -35,7 +34,6 @@ def init_surname_dict():
 
 @st.cache_resource
 def check_png_deps():
-    """检测 PNG 转换依赖是否可用"""
     return shutil.which("soffice") is not None and shutil.which("pdftoppm") is not None
 
 
@@ -68,14 +66,13 @@ def fill_template(prs, replacements):
     return prs
 
 
-def pptx_to_png_first_page(pptx_bytes):
-    """将 PPTX 第一页转为 PNG 图片（返回 bytes）"""
+def pptx_bytes_to_png(pptx_bytes):
+    """将 PPTX 第一页转为 PNG（返回 bytes，失败返回 None）"""
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir)
         pptx_path = base / "input.pptx"
         pptx_path.write_bytes(pptx_bytes)
 
-        # 1. PPTX → PDF
         result = subprocess.run(
             ["soffice", "--headless", "--convert-to", "pdf",
              "--outdir", str(base), str(pptx_path)],
@@ -88,7 +85,6 @@ def pptx_to_png_first_page(pptx_bytes):
         if not pdf_files:
             return None
 
-        # 2. PDF 第一页 → PNG
         prefix = base / "page"
         result = subprocess.run(
             ["pdftoppm", "-png", "-r", "200", "-f", "1", "-l", "1",
@@ -99,18 +95,16 @@ def pptx_to_png_first_page(pptx_bytes):
             return None
 
         generated = list(base.glob("page-*.png"))
-        if not generated:
-            return None
-
-        return generated[0].read_bytes()
+        return generated[0].read_bytes() if generated else None
 
 
-def generate_all(template_bytes, df, make_png):
-    """批量生成 PPTX + 可选 PNG，返回 {文件名: bytes}"""
+def generate_pngs(template_bytes, df):
+    """批量生成 PNG 图片，返回 {文件名: bytes}"""
     results = {}
     has_en_column = "en_name" in df.columns
+    total = len(df)
 
-    for _, row in df.iterrows():
+    for idx, (_, row) in enumerate(df.iterrows()):
         uid = clean_cell(row["id"])
         cn_name = str(row["cn_name"]).strip()
         num = clean_cell(row["number"])
@@ -124,23 +118,19 @@ def generate_all(template_bytes, df, make_png):
             if en_name == "":
                 en_name = chinese_to_pinyin(cn_name)
 
+        # 生成 PPTX → 转 PNG → PPTX 丢弃
         prs = Presentation(io.BytesIO(template_bytes))
         fill_template(prs, {
             "{{ID}}": uid,
             "{{CN_NAME}}": cn_name,
             "{{EN_NAME}}": en_name
         })
-
-        base = f"{num}_{uid}_{cn_name}"
         pptx_buf = io.BytesIO()
         prs.save(pptx_buf)
-        pptx_bytes = pptx_buf.getvalue()
-        results[f"pptx/{base}.pptx"] = pptx_bytes
 
-        if make_png:
-            png_bytes = pptx_to_png_first_page(pptx_bytes)
-            if png_bytes:
-                results[f"png/{base}.png"] = png_bytes
+        png_bytes = pptx_bytes_to_png(pptx_buf.getvalue())
+        if png_bytes:
+            results[f"{num}_{uid}_{cn_name}.png"] = png_bytes
 
     return results
 
@@ -149,11 +139,16 @@ def generate_all(template_bytes, df, make_png):
 
 st.set_page_config(page_title="证书批量生成器", page_icon="📜", layout="centered")
 st.title("📜 证书批量生成器")
-st.caption("上传 CSV 数据文件和 PPTX 模板，一键批量生成证书")
+st.caption("上传 CSV 数据文件 + PPTX 模板，批量导出证书 PNG 图片")
 
 init_surname_dict()
 
-# ---- 步骤说明 ----
+# ---- 依赖检测 ----
+if not check_png_deps():
+    st.error("❌ 服务端未安装 LibreOffice，暂时无法使用。请联系管理员。")
+    st.stop()
+
+# ---- 使用说明 ----
 with st.expander("📖 使用说明", expanded=False):
     st.markdown("""
     **CSV 文件格式**（必须有表头）：
@@ -178,14 +173,6 @@ with col1:
 with col2:
     pptx_file = st.file_uploader("📄 上传 PPTX 模板文件", type=["pptx"])
 
-# ---- PNG 选项 ----
-png_available = check_png_deps()
-make_png = st.checkbox("同时生成 PNG 图片（每份证书的第一页）",
-                        value=png_available,
-                        disabled=not png_available)
-if not png_available:
-    st.caption("⚠️ 云端未安装 LibreOffice，暂不支持 PNG（本地部署可启用）")
-
 # ---- 预览 ----
 if csv_file is not None:
     try:
@@ -198,59 +185,57 @@ if csv_file is not None:
 
 # ---- 生成按钮 ----
 if csv_file and pptx_file:
-    if st.button("🚀 开始批量生成", type="primary", use_container_width=True):
-        with st.spinner("正在生成中..."):
+    if st.button("🚀 开始批量生成 PNG", type="primary", use_container_width=True):
+        with st.spinner("正在生成证书图片..."):
             try:
                 csv_file.seek(0)
                 df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
                 pptx_bytes = pptx_file.read()
 
-                results = generate_all(pptx_bytes, df, make_png)
+                results = generate_pngs(pptx_bytes, df)
 
-                pptx_count = sum(1 for k in results if k.endswith(".pptx"))
-                png_count = sum(1 for k in results if k.endswith(".png"))
-
-                if len(results) == 1:
+                if not results:
+                    st.error("生成失败，请检查模板和 CSV 数据是否正确。")
+                elif len(results) == 1:
                     name, data = list(results.items())[0]
                     st.success("生成完成！")
+                    st.image(data, caption=name, use_container_width=True)
                     st.download_button(
                         f"⬇ 下载 {name}", data=data, file_name=name,
-                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                        mime="image/png"
                     )
                 else:
+                    st.success(f"生成完成！共 {len(results)} 张 PNG 图片")
+
+                    # 打包 ZIP
                     zip_buf = io.BytesIO()
                     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                         for name, data in results.items():
                             zf.writestr(name, data)
                     zip_buf.seek(0)
 
-                    summary = f"PPTX {pptx_count} 个"
-                    if png_count > 0:
-                        summary += f"，PNG {png_count} 个"
-                    st.success(f"生成完成！共 {summary}")
-
-                    zip_name = "certificates.zip"
                     st.download_button(
-                        label=f"⬇ 下载全部（{summary}，ZIP 压缩包）",
+                        label=f"⬇ 下载全部 PNG（{len(results)} 张，ZIP）",
                         data=zip_buf.getvalue(),
-                        file_name=zip_name,
+                        file_name="certificates.zip",
                         mime="application/zip",
                         use_container_width=True
                     )
 
+                    # 预览前几张
+                    with st.expander(f"🖼 图片预览（前 5 张）"):
+                        cols = st.columns(2)
+                        for i, (name, data) in enumerate(list(results.items())[:5]):
+                            with cols[i % 2]:
+                                st.image(data, caption=name, use_container_width=True)
+
+                    # 单张下载
                     with st.expander("📂 文件列表"):
                         for name in sorted(results.keys()):
-                            icon = "🖼" if name.endswith(".png") else "📄"
-                            st.write(f"{icon} {name}")
-                            ext = name.split(".")[-1]
-                            mime_map = {
-                                "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                                "png": "image/png"
-                            }
                             st.download_button(
                                 f"⬇ {name}", data=results[name],
                                 file_name=name, key=name,
-                                mime=mime_map.get(ext, "application/octet-stream")
+                                mime="image/png"
                             )
 
             except Exception as e:
