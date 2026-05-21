@@ -148,8 +148,8 @@ with left:
     if csv_file is not None:
         try:
             preview_df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
-            st.caption(f"📋 数据预览（共 {len(preview_df)} 条）")
-            st.dataframe(preview_df, use_container_width=True)
+            st.caption(f"📋 数据预览（共 {len(preview_df)} 条，显示前 3 条）")
+            st.dataframe(preview_df.head(3), use_container_width=True)
         except Exception as e:
             st.error(f"CSV 解析失败: {e}")
 
