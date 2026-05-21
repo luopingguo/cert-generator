@@ -102,8 +102,8 @@ st.set_page_config(page_title="证书批量生成器", page_icon="📜", layout=
 init_surname_dict()
 
 # 初始化 session state
-for key, default in [("results", None), ("trigger", False),
-                     ("csv_bytes", None), ("pptx_bytes", None)]:
+for key, default in [("trigger", False), ("csv_bytes", None), ("pptx_bytes", None),
+                     ("work_dir", None), ("png_count", 0), ("png_names", [])]:
     if key not in st.session_state:
         st.session_state[key] = default
 
@@ -158,8 +158,13 @@ with left:
             csv_file.seek(0)
             st.session_state.csv_bytes = csv_file.read()
             st.session_state.pptx_bytes = pptx_file.read()
+            # 清理旧临时目录
+            if st.session_state.work_dir:
+                shutil.rmtree(st.session_state.work_dir, ignore_errors=True)
             st.session_state.trigger = True
-            st.session_state.results = None
+            st.session_state.work_dir = None
+            st.session_state.png_count = 0
+            st.session_state.png_names = []
             st.rerun()
 
 # ===== 右栏：进度 + 下载 + 预览 =====
@@ -171,15 +176,18 @@ with right:
             df = pd.read_csv(io.BytesIO(csv_bytes), dtype={"id": str, "number": str})
             has_en_column = "en_name" in df.columns
             total = len(df)
-            total_rows = df.to_dict("records")
+
+            # 创建临时工作目录，存 PNG 文件
+            work_dir = Path(tempfile.mkdtemp(prefix="cert_"))
+            st.session_state.work_dir = str(work_dir)
 
             progress_bar = st.progress(0, text="准备中...")
             status_text = st.empty()
             preview_spot = st.empty()
-            zip_spot = st.empty()
 
-            results = {}
-            for i, row in enumerate(total_rows):
+            png_names = []
+            first_png_name = None
+            for i, (_, row) in enumerate(df.iterrows()):
                 uid = clean_cell(row["id"])
                 cn_name = str(row["cn_name"]).strip()
                 num = clean_cell(row["number"])
@@ -205,27 +213,24 @@ with right:
                 png_bytes = pptx_bytes_to_png(pptx_buf.getvalue())
                 if png_bytes:
                     fname = f"{num}_{uid}_{cn_name}.png"
-                    results[fname] = png_bytes
+                    filepath = work_dir / fname
+                    filepath.write_bytes(png_bytes)
+                    png_names.append(fname)
+
+                    if i == 0:
+                        first_png_name = fname
+                        preview_spot.image(png_bytes, caption=fname, use_container_width=True)
 
                 pct = (i + 1) / total
                 progress_bar.progress(pct, text=f"正在处理 {i + 1}/{total}")
                 status_text.caption(f"当前：{cn_name}")
 
-                if i == 0 and png_bytes:
-                    preview_spot.image(png_bytes, caption=fname, use_container_width=True)
-
-            # 生成 ZIP
-            zip_buf = io.BytesIO()
-            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for name, data in results.items():
-                    zf.writestr(name, data)
-            zip_buf.seek(0)
-            st.session_state.zip_data = zip_buf.getvalue()
-
             progress_bar.empty()
             status_text.empty()
 
-            st.session_state.results = results
+            st.session_state.png_count = len(png_names)
+            st.session_state.png_names = png_names
+            st.session_state.first_png_name = first_png_name
             st.session_state.trigger = False
             st.rerun()
 
@@ -233,23 +238,34 @@ with right:
             st.session_state.trigger = False
             st.error(f"生成失败: {e}")
 
-    elif st.session_state.results is not None:
-        results = st.session_state.results
-        zip_data = st.session_state.get("zip_data")
+    elif st.session_state.work_dir and st.session_state.png_count > 0:
+        work_dir = Path(st.session_state.work_dir)
+        png_names = st.session_state.png_names
+        count = st.session_state.png_count
 
-        if zip_data:
-            st.download_button(
-                label=f"⬇ 下载全部（{len(results)} 张，ZIP）",
-                data=zip_data,
-                file_name="certificates.zip",
-                mime="application/zip",
-                use_container_width=True
-            )
+        # 从磁盘文件生成 ZIP
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name in png_names:
+                zf.write(work_dir / name, arcname=name)
+        zip_buf.seek(0)
+        zip_bytes = zip_buf.getvalue()
 
-        st.success(f"✅ 共生成 {len(results)} 张证书图片")
+        st.download_button(
+            label=f"⬇ 下载全部（{count} 张，ZIP）",
+            data=zip_bytes,
+            file_name="certificates.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
 
-        first_name, first_data = list(results.items())[0]
-        st.image(first_data, caption=first_name, use_container_width=True)
+        st.success(f"✅ 共生成 {count} 张证书图片")
+
+        # 读取第一张预览
+        first_name = st.session_state.first_png_name
+        if first_name:
+            first_data = (work_dir / first_name).read_bytes()
+            st.image(first_data, caption=first_name, use_container_width=True)
 
     else:
         st.markdown("""
