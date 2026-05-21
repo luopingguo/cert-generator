@@ -214,31 +214,30 @@ if csv_file and pptx_file:
                             zf.writestr(name, data)
                     zip_buf.seek(0)
 
-                    st.download_button(
-                        label=f"⬇ 下载全部 PNG（{len(results)} 张，ZIP）",
-                        data=zip_buf.getvalue(),
-                        file_name="certificates.zip",
-                        mime="application/zip",
-                        use_container_width=True
-                    )
+                    left, right = st.columns([1, 1])
+                    with left:
+                        st.download_button(
+                            label=f"⬇ 下载全部 PNG（{len(results)} 张，ZIP）",
+                            data=zip_buf.getvalue(),
+                            file_name="certificates.zip",
+                            mime="application/zip",
+                            use_container_width=True
+                        )
+                        with st.expander("📂 全部文件列表"):
+                            for name in sorted(results.keys()):
+                                st.download_button(
+                                    f"⬇ {name}", data=results[name],
+                                    file_name=name, key=name,
+                                    mime="image/png"
+                                )
+                        if len(results) > 1:
+                            with st.expander(f"🖼 其余 {len(results) - 1} 张预览"):
+                                for name, data in list(results.items())[1:]:
+                                    st.image(data, caption=name, use_container_width=True)
 
-                    # 默认展示第一张预览，其余可折叠查看
-                    first_name, first_data = list(results.items())[0]
-                    st.image(first_data, caption=first_name, use_container_width=True)
-
-                    if len(results) > 1:
-                        with st.expander(f"🖼 其余 {len(results) - 1} 张预览"):
-                            for name, data in list(results.items())[1:]:
-                                st.image(data, caption=name, use_container_width=True)
-
-                    # 单张下载
-                    with st.expander("📂 全部文件列表"):
-                        for name in sorted(results.keys()):
-                            st.download_button(
-                                f"⬇ {name}", data=results[name],
-                                file_name=name, key=name,
-                                mime="image/png"
-                            )
+                    with right:
+                        first_name, first_data = list(results.items())[0]
+                        st.image(first_data, caption=first_name, use_container_width=True)
 
             except Exception as e:
                 st.error(f"生成失败: {e}")
