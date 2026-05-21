@@ -125,7 +125,8 @@ BATCH_SIZE = 5  # 每批处理数量，避免容器内存超限
 # 初始化 session state
 for key, default in [("trigger", False), ("pptx_bytes", None),
                      ("work_dir", None), ("batch_idx", 0), ("total_rows", []),
-                     ("png_names", []), ("first_png_name", None)]:
+                     ("png_names", []), ("first_png_name", None),
+                     ("ok_count", 0), ("fail_count", 0)]:
     if key not in st.session_state:
         st.session_state[key] = default
 
@@ -193,6 +194,8 @@ with left:
                 st.session_state.batch_idx = 0
                 st.session_state.png_names = []
                 st.session_state.first_png_name = None
+                st.session_state.ok_count = 0
+                st.session_state.fail_count = 0
                 st.session_state.work_dir = str(Path(tempfile.mkdtemp(prefix="cert_")))
                 st.session_state.trigger = True
                 st.rerun()
@@ -250,9 +253,12 @@ with right:
                     fname = f"{num}_{uid}_{cn_name}.png"
                     (work_dir / fname).write_bytes(png_bytes)
                     st.session_state.png_names.append(fname)
+                    st.session_state.ok_count += 1
                     if batch_idx == 0 and j == 0:
                         st.session_state.first_png_name = fname
                         preview_spot.image(png_bytes, caption=fname, use_container_width=True)
+                else:
+                    st.session_state.fail_count += 1
 
                 global_i = batch_idx + j + 1
                 progress_bar.progress(global_i / total,
@@ -274,32 +280,41 @@ with right:
             st.session_state.trigger = False
             st.error(f"生成失败: {e}")
 
-    elif st.session_state.work_dir and st.session_state.png_names:
+    elif st.session_state.work_dir is not None and not st.session_state.trigger:
         work_dir = Path(st.session_state.work_dir)
         png_names = st.session_state.png_names
-        count = len(png_names)
+        ok = st.session_state.ok_count
+        fail = st.session_state.fail_count
 
-        # 生成 ZIP
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for name in png_names:
-                zf.write(work_dir / name, arcname=name)
-        zip_buf.seek(0)
+        if ok == 0 and fail > 0:
+            st.error(f"❌ 全部 {fail} 张转换失败，请检查模板或联系管理员")
+        elif ok == 0:
+            st.info("等待生成...")
+        else:
+            # 生成 ZIP
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for name in png_names:
+                    zf.write(work_dir / name, arcname=name)
+            zip_buf.seek(0)
 
-        st.download_button(
-            label=f"⬇ 下载全部（{count} 张，ZIP）",
-            data=zip_buf.getvalue(),
-            file_name="certificates.zip",
-            mime="application/zip",
-            use_container_width=True
-        )
+            st.download_button(
+                label=f"⬇ 下载全部（{ok} 张，ZIP）",
+                data=zip_buf.getvalue(),
+                file_name="certificates.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
 
-        st.success(f"✅ 共生成 {count} 张证书图片")
+            msg = f"✅ 成功 {ok} 张"
+            if fail > 0:
+                msg += f"，失败 {fail} 张"
+            st.success(msg)
 
-        first_name = st.session_state.first_png_name
-        if first_name:
-            first_data = (work_dir / first_name).read_bytes()
-            st.image(first_data, caption=first_name, use_container_width=True)
+            first_name = st.session_state.first_png_name
+            if first_name:
+                first_data = (work_dir / first_name).read_bytes()
+                st.image(first_data, caption=first_name, use_container_width=True)
 
     else:
         st.markdown("""
