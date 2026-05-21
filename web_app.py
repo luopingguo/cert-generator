@@ -96,60 +96,31 @@ def pptx_bytes_to_png(pptx_bytes):
         return generated[0].read_bytes() if generated else None
 
 
-def generate_pngs(template_bytes, df):
-    results = {}
-    has_en_column = "en_name" in df.columns
-
-    for _, row in df.iterrows():
-        uid = clean_cell(row["id"])
-        cn_name = str(row["cn_name"]).strip()
-        num = clean_cell(row["number"])
-
-        en_name = ""
-        if is_chinese(cn_name):
-            if has_en_column:
-                val = row["en_name"]
-                if pd.notna(val) and str(val).strip() != "":
-                    en_name = str(val).strip()
-            if en_name == "":
-                en_name = chinese_to_pinyin(cn_name)
-
-        prs = Presentation(io.BytesIO(template_bytes))
-        fill_template(prs, {
-            "{{ID}}": uid,
-            "{{CN_NAME}}": cn_name,
-            "{{EN_NAME}}": en_name
-        })
-        pptx_buf = io.BytesIO()
-        prs.save(pptx_buf)
-
-        png_bytes = pptx_bytes_to_png(pptx_buf.getvalue())
-        if png_bytes:
-            results[f"{num}_{uid}_{cn_name}.png"] = png_bytes
-
-    return results
-
-
 # ====================== 页面 ======================
 
 st.set_page_config(page_title="证书批量生成器", page_icon="📜", layout="wide")
 init_surname_dict()
 
-if "results" not in st.session_state:
-    st.session_state.results = None
+# 初始化 session state
+for key, default in [("results", None), ("trigger", False),
+                     ("csv_bytes", None), ("pptx_bytes", None)]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
-# ---- 依赖检测 ----
 if not check_png_deps():
     st.error("❌ 服务端未安装 LibreOffice，暂时无法使用。请联系管理员。")
     st.stop()
 
-# ---- 左右双栏布局 ----
+# ===== 标题（全宽） =====
+st.title("📜 证书批量生成器")
+st.caption("上传 CSV + PPTX 模板，批量导出证书 PNG 图片")
+st.divider()
+
+# ===== 左右分栏 =====
 left, right = st.columns([1, 1])
 
+# ===== 左栏：配置 =====
 with left:
-    st.title("📜 证书批量生成器")
-    st.caption("上传 CSV + PPTX 模板，批量导出证书 PNG 图片")
-
     with st.expander("📖 使用说明", expanded=True):
         st.markdown("""
         **CSV 文件格式**（必须有表头）：
@@ -167,8 +138,12 @@ with left:
         - 否则 → 拼音自动生成（含多音字纠正）
         """)
 
-    csv_file = st.file_uploader("📄 上传 CSV 数据文件", type=["csv"])
-    pptx_file = st.file_uploader("📄 上传 PPTX 模板文件", type=["pptx"])
+    # CSV + PPTX 并排一行
+    ul1, ul2 = st.columns(2)
+    with ul1:
+        csv_file = st.file_uploader("📄 上传 CSV", type=["csv"], key="csv_uploader")
+    with ul2:
+        pptx_file = st.file_uploader("📄 上传 PPTX", type=["pptx"], key="pptx_uploader")
 
     if csv_file is not None:
         try:
@@ -180,52 +155,109 @@ with left:
 
     if csv_file and pptx_file:
         if st.button("🚀 开始批量生成 PNG", type="primary", use_container_width=True):
-            with st.spinner("正在生成证书图片..."):
-                try:
-                    csv_file.seek(0)
-                    df = pd.read_csv(csv_file, dtype={"id": str, "number": str})
-                    pptx_bytes = pptx_file.read()
-                    st.session_state.results = generate_pngs(pptx_bytes, df)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"生成失败: {e}")
-    else:
-        st.session_state.results = None
+            csv_file.seek(0)
+            st.session_state.csv_bytes = csv_file.read()
+            st.session_state.pptx_bytes = pptx_file.read()
+            st.session_state.trigger = True
+            st.session_state.results = None
+            st.rerun()
 
-# ---- 右栏：预览 + 下载 ----
+# ===== 右栏：进度 + 下载 + 预览 =====
 with right:
-    results = st.session_state.results
+    if st.session_state.trigger:
+        try:
+            csv_bytes = st.session_state.csv_bytes
+            pptx_bytes = st.session_state.pptx_bytes
+            df = pd.read_csv(io.BytesIO(csv_bytes), dtype={"id": str, "number": str})
+            has_en_column = "en_name" in df.columns
+            total = len(df)
+            total_rows = df.to_dict("records")
 
-    if results is None:
-        st.markdown("""
-        <div style="height:100%;display:flex;align-items:center;justify-content:center;color:#999;font-size:18px">
-        👈 上传 CSV 和 PPTX 模板，点击生成按钮<br>证书预览将显示在这里
-        </div>
-        """, unsafe_allow_html=True)
-    elif not results:
-        st.error("生成失败，请检查模板和 CSV 数据是否正确。")
-    else:
-        # ZIP 下载
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for name, data in results.items():
-                zf.writestr(name, data)
-        zip_buf.seek(0)
+            progress_bar = st.progress(0, text="准备中...")
+            status_text = st.empty()
+            preview_spot = st.empty()
+            zip_spot = st.empty()
 
-        st.download_button(
-            label=f"⬇ 下载全部（{len(results)} 张，ZIP）",
-            data=zip_buf.getvalue(),
-            file_name="certificates.zip",
-            mime="application/zip",
-            use_container_width=True
-        )
+            results = {}
+            for i, row in enumerate(total_rows):
+                uid = clean_cell(row["id"])
+                cn_name = str(row["cn_name"]).strip()
+                num = clean_cell(row["number"])
 
-        st.success(f"共生成 {len(results)} 张证书图片")
+                en_name = ""
+                if is_chinese(cn_name):
+                    if has_en_column:
+                        val = row["en_name"]
+                        if pd.notna(val) and str(val).strip() != "":
+                            en_name = str(val).strip()
+                    if en_name == "":
+                        en_name = chinese_to_pinyin(cn_name)
 
-        # 第一张预览
+                prs = Presentation(io.BytesIO(pptx_bytes))
+                fill_template(prs, {
+                    "{{ID}}": uid,
+                    "{{CN_NAME}}": cn_name,
+                    "{{EN_NAME}}": en_name
+                })
+                pptx_buf = io.BytesIO()
+                prs.save(pptx_buf)
+
+                png_bytes = pptx_bytes_to_png(pptx_buf.getvalue())
+                if png_bytes:
+                    fname = f"{num}_{uid}_{cn_name}.png"
+                    results[fname] = png_bytes
+
+                pct = (i + 1) / total
+                progress_bar.progress(pct, text=f"正在处理 {i + 1}/{total}")
+                status_text.caption(f"当前：{cn_name}")
+
+                if i == 0 and png_bytes:
+                    preview_spot.image(png_bytes, caption=fname, use_container_width=True)
+
+            # 生成 ZIP
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for name, data in results.items():
+                    zf.writestr(name, data)
+            zip_buf.seek(0)
+            st.session_state.zip_data = zip_buf.getvalue()
+
+            progress_bar.empty()
+            status_text.empty()
+
+            st.session_state.results = results
+            st.session_state.trigger = False
+            st.rerun()
+
+        except Exception as e:
+            st.session_state.trigger = False
+            st.error(f"生成失败: {e}")
+
+    elif st.session_state.results is not None:
+        results = st.session_state.results
+        zip_data = st.session_state.get("zip_data")
+
+        if zip_data:
+            st.download_button(
+                label=f"⬇ 下载全部（{len(results)} 张，ZIP）",
+                data=zip_data,
+                file_name="certificates.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
+
+        st.success(f"✅ 共生成 {len(results)} 张证书图片")
+
         first_name, first_data = list(results.items())[0]
         st.image(first_data, caption=first_name, use_container_width=True)
 
-# ---- 页脚 ----
+    else:
+        st.markdown("""
+        <div style="height:300px;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:16px;text-align:center;border:2px dashed #ddd;border-radius:12px">
+        👈 上传 CSV 和 PPTX 模板<br>点击生成后，证书预览将显示在这里
+        </div>
+        """, unsafe_allow_html=True)
+
+# ===== 页脚 =====
 st.divider()
 st.caption("💡 姓氏多音字自动纠正（卜→Bǔ、单→Shàn、仇→Qiú 等）| 基于 pypinyin")
